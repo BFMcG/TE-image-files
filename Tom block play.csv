@@ -1,0 +1,2 @@
+quarter,down,yardsToGo,offenseFormation,receiverAlignment,pff_passCoverage,inMotionAtBallSnap,shiftSinceLineset,displayName,DistFromBall_Wid,multipleTE,TEposition,TEAlignment,DistFromBall_RB,TEassignment,scoreDiff,gameClock,OnLOS
+3,1,10,SINGLEBACK,2x2,Quarters,FALSE,FALSE,Eric Tomlinson,5.66,TRUE,TEo,0x2,6.12,Block,-1,6.48,FALSE
