@@ -1,0 +1,313 @@
+---
+output:     
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    toc_depth: 3
+    code_folding: show
+    theme: cosmo
+---
+
+```{r, include=FALSE}
+library(kableExtra)
+Tom_block <- read.csv("/Users/brend/OneDrive/Documents/Data Bowl Notebooks/Test Files/Tom block.csv")
+Tom_route <- read.csv("/Users/brend/OneDrive/Documents/Data Bowl Notebooks/Test Files/Tom route.csv")
+Tom_block_play <- read.csv("/Users/brend/OneDrive/Documents/Data Bowl Notebooks/Test Files/Tom block play.csv", colClasses = c(TEAlignment = "character"))
+Mean_table <- read.csv("/Users/brend/OneDrive/Documents/Data Bowl Notebooks/Test Files/Mean Table.csv")
+```
+
+# Predicting Tight End Roles
+
+Data Bowl 2025
+
+Author: Brendan McGuinness
+
+Undergraduate Track
+
+## Introduction
+
+One of the most vital roles in a successful teams offense is the role of the tight end. They contribute to multiple layers in a offense. Whether it's pass protection and run defense on the o-line, or running routes as a receiver. If a defense is able to decipher what the tight end's intentions are prior to the snap, they can cover the field more effectively. As well as, being able to apply more pressure where the offense doesn't expect.
+
+This notebook will cover predicting whether a tight end will block or run route using pre-snap data, and finding important indicators for predicting a tight end's role. This will be achieved by creating predictors/features, fitting the data to an appropriate model, and analyzing what features are the most significant.
+
+::: {style="text-align: center;"}
+![](/Users/brend/OneDrive/Documents/Data%20Bowl%20Notebooks/TE%20lined%20up.png){width="600px"}
+:::
+
+## Methods
+
+### Feature Engineering
+
+In order to be able to predict a tight end's (TE) role with high accuracy we must create valuable predictors that will help train the model. This starts by having an understanding of what contributes to a TE being assigned either a block or a route.
+
+-   **TE Distance:** The distance, in yards, the TE is from the ball prior to the snap. This could be a valuable predictor because if they're lined up far away from the ball, then they're more often lined up as a receiver and will often run a route. But if they're lined up closer to the ball they're more often lined up to block.
+
+-   **TE Position:** The position the TE is in before the ball snap. When a TE lines up for a play they're typically lined up next to the tackle, lined up as a receiver, or lined up next to additional TEs creating different alignments and positions. Being able to distinguish between each of these positions could be valuable in determining the TE's role before the snap.
+
+    *How do you determine if a TE is in a TE position or not?*
+
+    1)  Using TE Distance, if the TE is within 2 yards of the tackle on their side, then they will be considered a TE
+
+    2)  If there are multiple TEs, then the TE must be either within 2 yards of a tackle or within 2 yards of another TE
+
+    *More extensive details about determining the TE's position can be found under Data Cleaning.Rmd in the Appendix*
+
+    `TEposition` classes:
+
+    -   TEo: If lined up as the outside most TE
+
+    -   TEi: If one TE (in TE position) is lined up outside of them
+
+    -   TEii: If two TEs (both in TE position) are lined up outside of them
+
+    -   Not TE: If determined to not be in a TE position
+
+-   **TE Alignment:** Similar to `receiverAlignment` except in this case we are only showing the alignment for TEs that are in a TE position. If a TE is labeled as "Not TE" then they will not be considered apart of the TE Alignment
+
+-   **RB Distance:** How many yards a running back (RB) is from the ball prior to the snap. In my exploratory data analysis of RBs I noticed that a great indicator for if there was going to be a run or a pass was how far from the ball the RB sets up. This makes intuitive sense since when the RB is about 5 yards away they're in Shotgun formation, which allows for a higher RB route potential. But if they are about 7 yards away, like in Single back or Pistol formation, there route options are limited and would look more toward running the ball or acting as a decoy. Thus this makes a great predictor for determining if a TE will run a route or block since it mostly hinges on if the RB is going to get the ball or not.
+
+    ::: {style="text-align: center;"}
+    ![](/Users/brend/OneDrive/Documents/Data%20Bowl%20Notebooks/RB%20plot.png){width="600px"}
+    :::
+
+    ::: {style="text-align: center;"}
+    ***Figure 1***
+    :::
+
+    *What if there is more than 1 RB?*
+
+    We only want the distance of one RB to compare to our TEs, here are the parameters if there is more than one RB:
+
+    1)  If the RB has a rush attempt, keep
+    2)  If neither had a rush attempt, check if RB Distance is over 9 yards away, if a RB is 9 yards away or more, keep
+    3)  If both less than 9 yards, keep the RB that's closest
+    4)  If both more than 9 yards, keep the RB that's furthest
+
+    *What if there is no RB?*
+
+    Only 1.2% of TE data doesn't have a RB present. Since the data isn't random missingness, bootstraping shouldn't be used. Thus, they are each given a distance of 0, this way they can still be kept as an observation, while showing they aren't present
+
+### Model Features
+
+These features will be used to train the model
+
+-   `quarter`(factor): Game quarter
+-   `down`(factor): Down
+-   `yardsToGo`(numeric): Distance needed for a first down
+-   `possessionTeam`(factor): Team abbr that has possession of ball
+-   `offenseFormation`(factor): Formation used by possession team
+-   `receiverAlignment`(factor): Enumerated as 2x1, 2x2, 3x1, 3x1, OTHER
+-   `pff_passCoverage`(factor): Pass coverage concept employed
+-   `inMotionAtBallSnap`(logic): Boolean indicating whether the TE was in motion at snap
+-   `shiftSinceLineset`(logic): Boolean indicating whether the TE shifted since lineset
+-   `displayName`(factor): Name of the TE
+-   `DistFromBall_Wid`(numeric): Distance, width wise, in yards the TE is from the ball prior to the snap
+-   `multipleTE`(logic): Boolean indicating if there were more than 1 TE on the play
+-   `TEposition`(factor): What position the TE was in (TEo, TEi, TEii, Not TE)
+-   `TEAlignment`(factor): Enumerated as 0x0, 0x1, 1x0, ..., 3x0, 0x3
+-   `DistFromBall_RB`(numeric): Distance, straight line, in yards a RB is from the ball prior to the snap (0 if no RB)
+-   `TEassignment`(factor): Whether the TE on the play ran a route or made a block
+-   `scoreDiff`(numeric): The score differential between teams at the time of the snap (- if behind + if ahead)
+-   `gameClock`(numeric): How much time is remaining in the quarter
+-   `OnLOS`(logic): Boolean indicating if the TE was on the Line Of Scrimmage or not
+
+### Random Forest Model
+
+I have selected Random Forest to model my data because it showed the the largest ROC AUC when compared to other models such as: Logistic Regression, Elastic Net Regression, Support Vector Machine, and a Gradient Boosted tree, as well as being able to detect strong interactions that I may have missed when testing other models.
+
+### Overall Model vs Team Model
+
+I'm taking two different approaches for modeling the data. First, the overall model, is a single model that is trained on 80% of the 18,500 observations. This generalizes every tight end across the league and can be tested using any test observation regardless of the possession team. In the second, the team model, the training and testing data used for the overall model is split by team into 32 different models. This allows for the `displayName` feature to be used in each mode,l reducing its 123 levels to just 3 or 4 per model.
+
+The results will answer the following questions:
+
+***Which approach has a better accuracy on average?***
+
+***What are the most important features for predicting a TE's role?***
+
+***Can each model accurately predicting a test observation? an observed not found in the data set? Which approach is better?***
+
+## Results
+
+### Comparing Team and Overall Models
+
+::: {style="text-align: center;"}
+![](/Users/brend/OneDrive/Documents/Data%20Bowl%20Notebooks/overall%20vs%20team.png){width="600px"}
+:::
+
+::: {style="text-align: center;"}
+***Figure 2***
+:::
+
+The overall model augmented testing data from each of the 32 NFL teams, each team model augmented their own teams testing data.
+
+Each quadrant represents if the model did well or not predicting a specific team.
+
+-   **Q1:** Team performed well, Overall performed poorly
+-   **Q2:** Both performed well
+-   **Q3:** Both performed poorly
+-   **Q4:** Team performed poorly, Overall performed well
+
+On average more teams are above the red line indicating that modeling by team yields better results
+
+However, most teams fell into quadrant 2 or 3, suggesting that if the overall model performed poorly/well predicting a team, the team model likely had the same result.
+
+***Which approach has a better accuracy on average?***
+
+```{r, echo=FALSE}
+Mean_table %>% 
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:ncol(Mean_table), extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c")
+```
+
+::: {style="text-align: center;"}
+***Figure 3***
+:::
+
+The team models just edge out the overall model, but it's not a large enough difference to say that team split models are better than the overall model. Also, when analyzing the importance of features, team models that are successful `displayName` is usually outside the top ten in feature importance.
+
+### Feature Importance
+
+::: {style="text-align: center;"}
+![](/Users/brend/OneDrive/Documents/Data%20Bowl%20Notebooks/vip_plot.png){width="600px"}
+:::
+
+::: {style="text-align: center;"}
+***Figure 4***
+:::
+
+This graph shows what the random forest model considered the most important when determining which branch to follow. Hence, what it found the most useful when training on the data.
+
+***What are the most important features for predicting a TE's role?***
+
+The most important features appear to be the two distance metrics. As explained earlier, where the RB lines up is important because it limits or expands his route potential, while the TE's positioning limits or expands his blocking potential. Also, the TE's alignment is highly significant, as the side and number of TEs in position can indicate a run play. For example, three TEs often signal a run. Offensive formations are also important, with Empty and Shotgun favoring routes, while Single Back and I Formation often lead to blocks.
+
+### Predicting Plays
+
+I decided to pick plays by Eric Tomlinson on the Denver Broncos because I wanted to see how the models would respond to a player that normally blocks.
+
+::: {style="text-align: center;"}
+![](/Users/brend/OneDrive/Documents/Data%20Bowl%20Notebooks/Tomlinson%20Plot.png){width="600px"}
+:::
+
+::: {style="text-align: center;"}
+***Figure 5***
+:::
+
+First, an easy scenario, the play was chosen out of Denver's testing data. So, its been unseen by both fitted models
+
+::: {style="text-align: center;"}
+![](/Users/brend/OneDrive/Documents/Data%20Bowl%20Notebooks/Tomlinson%20B.png){width="600px"}
+:::
+
+```{r, echo=FALSE}
+Tom_block_play %>% 
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:ncol(Tom_block_play), extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c") %>%
+  scroll_box(width = "100%")
+```
+
+::: {style="text-align: center;"}
+***Figure 6***
+:::
+
+<div style="text-align: center;">
+  <video width="640" height="360" controls> 
+    <source src="/Users/brend/OneDrive/Documents/Data Bowl Notebooks/Block2.mp4" type="video/mp4"> 
+  </video>
+</div>
+
+```{r, echo=FALSE}
+Tom_block %>% 
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:ncol(Tom_block), extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c")
+```
+::: {style="text-align: center;"}
+***Figure 7***
+:::
+
+Both model were able to predict that Eric would block. However the overall model had greater confidence that a block was coming, even though the result of the play was a pass. I didn't expect the overall model to see through the decoy and predict the role correctly.
+
+For the second scenario, I picked a play that occurred in week 12 against the Cardinals, a week that wasn't in our given data set so it's unseen by both models.
+
+::: {style="text-align: center;"}
+![](/Users/brend/OneDrive/Documents/Data%20Bowl%20Notebooks/Tomlinson%20T.png){width="600px"}
+:::
+
+```{r, echo=FALSE}
+Tomlinson_data <- data.frame(
+  quarter = 4,
+  down = 2,
+  yardsToGo = 3,
+  offenseFormation = "I_FORM",
+  receiverAlignment = "OTHER",
+  pff_passCoverage = "Red Zone",
+  inMotionAtBallSnap = FALSE,
+  shiftSinceLineset = FALSE,
+  displayName = "Eric Tomlinson",
+  DistFromBall_Wid = 5.5,
+  multipleTE = FALSE,
+  TEposition = "TEo",
+  TEAlignment = "0x1",
+  DistFromBall_RB = 7,
+  TEassignment = "Route",
+  scoreDiff = 8,
+  gameClock = 9.55,
+  OnLOS = TRUE
+)
+
+Tomlinson_data %>% 
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:ncol(Tomlinson_data), extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c") %>%
+  scroll_box(width = "100%")
+```
+::: {style="text-align: center;"}
+***Figure 8***
+:::
+
+<div style="text-align: center;">
+  <video width="640" height="360" controls> 
+    <source src="/Users/brend/OneDrive/Documents/Data Bowl Notebooks/Route T2.mp4" type="video/mp4"> 
+  </video>
+</div>
+
+
+```{r, echo=FALSE}
+Tom_route %>% 
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:ncol(Tom_block), extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c")
+```
+::: {style="text-align: center;"}
+***Figure 9***
+:::
+
+Everyone was fooled, including the models. Both of the models were more confident that a route was coming compared to the previous example. But, the Denver model was much closer to predicting the role correctly. I would expect the Denver model to be more certain when Tomlinson blocks since it has a feature expressing that he has a greater tendency to block. This is likely caused from the model having a greater density of training on Tomlinson's plays, so it's more accustomed to his and Denver's tendencies.
+
+***Can each model accurately predicting a test observation? an observed not found in the data set? Which approach is better?***
+
+Both models can predict accurately, but also fall short. I believe in common scenarios, like 1st and 10 and in mid-field position, the overall model would be more successful since it has more training on general situations. But, when the offense tries to deceive the defense I believe the team model is more effective. Since it's more tailored to the teams tendencies and personnel.
+
+## Conclusion
+
+What the TE does on a play really boils down to knowing whether the offense is going to run or pass. Great indicators for being able to make the right call are: where the running back is lined up, how far the TE is from the ball, and what formation the offense is in. However, one nuance is predicting if a TE is going to act as pass-protection, from what I learned, the best indicator for that is what personnel is on the field. Different TEs have different roles on the team and it's important to know what their tendencies are.
+
+The models are a work in progress and can be drastically improved with more observations and more features. One feature I was considering was what happened on the previous play and what its result was, as well as the personal that were on the field on the previous play.
+
+The model can also be improved by fitting the data to stronger a model like a neural network, putting the data through deep learning could uncover interactions that a random forest can not.
+
+## Appendix
+
+Word Count: 1984
+
+All code can be found [here](https://github.com/BFMcG/Predicting-Tight-End-Roles/tree/main) in GitHub
